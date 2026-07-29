@@ -93,6 +93,79 @@ function getSearchableShapeText(editor: Editor, shapeId: TLShapeId) {
 }
 
 /**
+ * A case-folded copy of a string, plus a map from each folded UTF-16 code unit back to the source
+ * range it came from.
+ *
+ * Folding is not length-preserving: `'İ'.toLowerCase()` is two code units, so folded offsets cannot
+ * be used against the source directly.
+ */
+interface TLUiFindOnCanvasFoldedText {
+	folded: string
+	/** Source index where the code point behind folded unit `i` starts. */
+	sourceStart: number[]
+	/** Source index just past the code point behind folded unit `i`. */
+	sourceEnd: number[]
+}
+
+/**
+ * Case-fold `text` one code point at a time, recording where each folded code unit came from.
+ *
+ * @internal
+ */
+export function foldTextForFind(text: string): TLUiFindOnCanvasFoldedText {
+	let folded = ''
+	const sourceStart: number[] = []
+	const sourceEnd: number[] = []
+
+	for (let index = 0; index < text.length; ) {
+		const codePoint = text.codePointAt(index)!
+		const source = String.fromCodePoint(codePoint)
+		const next = index + source.length
+		// Locale-independent, so the same query matches the same text for every user.
+		const lowered = source.toLowerCase()
+		for (let unit = 0; unit < lowered.length; unit++) {
+			sourceStart.push(index)
+			sourceEnd.push(next)
+		}
+		folded += lowered
+		index = next
+	}
+
+	// Sentinel, so a match that ends at the end of the string maps back cleanly.
+	sourceStart.push(text.length)
+	sourceEnd.push(text.length)
+
+	return { folded, sourceStart, sourceEnd }
+}
+
+/** @internal */
+export interface TLUiFindOnCanvasMatchRange {
+	start: number
+	end: number
+}
+
+/**
+ * Every case-insensitive occurrence of `query` in `text`, as ranges into the original `text`.
+ *
+ * @internal
+ */
+export function getFindMatchRanges(text: string, query: string): TLUiFindOnCanvasMatchRange[] {
+	const needle = foldTextForFind(query).folded
+	if (!needle) return []
+
+	const { folded, sourceStart, sourceEnd } = foldTextForFind(text)
+	const ranges: TLUiFindOnCanvasMatchRange[] = []
+
+	let at = folded.indexOf(needle)
+	while (at !== -1) {
+		ranges.push({ start: sourceStart[at], end: sourceEnd[at + needle.length - 1] })
+		at = folded.indexOf(needle, at + needle.length)
+	}
+
+	return ranges
+}
+
+/**
  * Find every page name and supported shape text that contains `query` as a case-insensitive
  * substring.
  *
@@ -103,13 +176,12 @@ function getSearchableShapeText(editor: Editor, shapeId: TLShapeId) {
  */
 export function getFindOnCanvasResults(editor: Editor, query: string): TLUiFindOnCanvasResult[] {
 	const results: TLUiFindOnCanvasResult[] = []
-	const needle = query.toLowerCase()
-	if (!needle) return results
+	if (!foldTextForFind(query).folded) return results
 
 	const matchIn = (text: string) => {
-		const start = text.toLowerCase().indexOf(needle)
-		if (start === -1) return null
-		return { matchStart: start, matchEnd: Math.min(start + needle.length, text.length) }
+		const first = getFindMatchRanges(text, query)[0]
+		if (!first) return null
+		return { matchStart: first.start, matchEnd: first.end }
 	}
 
 	for (const page of editor.getPages()) {
@@ -186,9 +258,22 @@ const SNIPPET_MAX_LENGTH = 64
 /** How much of a long result we keep before the first match. */
 const SNIPPET_LEAD = 20
 
+/** Move `index` back off the trailing half of a surrogate pair, so slices never split one. */
+function alignToCodePointStart(text: string, index: number) {
+	if (index <= 0) return 0
+	if (index >= text.length) return text.length
+	const code = text.charCodeAt(index)
+	// A low surrogate here means we landed inside a pair.
+	if (code >= 0xdc00 && code <= 0xdfff) return index - 1
+	return index
+}
+
 /**
  * Trim a long result down to the text around its first match, browser-find style, and split it into
  * matched and unmatched segments so the UI can emphasise the matches without injecting HTML.
+ *
+ * The segments always concatenate back to the visible snippet, and every non-ellipsis character
+ * comes verbatim from `text`.
  *
  * @internal
  */
@@ -196,28 +281,37 @@ export function getFindOnCanvasSnippet(
 	text: string,
 	query: string
 ): TLUiFindOnCanvasSnippetSegment[] {
-	const needle = query.toLowerCase()
-	if (!needle) return text ? [{ text, isMatch: false }] : []
+	const ranges = getFindMatchRanges(text, query)
+	if (ranges.length === 0) return text ? [{ text, isMatch: false }] : []
 
-	let snippet = text
+	// The window of `text` we show, in source indices.
+	let windowStart = 0
+	let windowEnd = text.length
 	if (text.length > SNIPPET_MAX_LENGTH) {
-		const at = text.toLowerCase().indexOf(needle)
-		const start = Math.max(0, (at === -1 ? 0 : at) - SNIPPET_LEAD)
-		const end = start + SNIPPET_MAX_LENGTH
-		snippet = (start > 0 ? '…' : '') + text.slice(start, end) + (end < text.length ? '…' : '')
+		windowStart = alignToCodePointStart(text, Math.max(0, ranges[0].start - SNIPPET_LEAD))
+		windowEnd = alignToCodePointStart(text, Math.min(text.length, windowStart + SNIPPET_MAX_LENGTH))
 	}
 
 	const segments: TLUiFindOnCanvasSnippetSegment[] = []
-	const lower = snippet.toLowerCase()
-	let index = 0
-	while (index <= snippet.length) {
-		const at = lower.indexOf(needle, index)
-		if (at === -1) break
-		if (at > index) segments.push({ text: snippet.slice(index, at), isMatch: false })
-		segments.push({ text: snippet.slice(at, at + needle.length), isMatch: true })
-		index = at + needle.length
+	const push = (value: string, isMatch: boolean) => {
+		if (value) segments.push({ text: value, isMatch })
 	}
-	if (index < snippet.length) segments.push({ text: snippet.slice(index), isMatch: false })
 
-	return segments.length ? segments : [{ text: snippet, isMatch: false }]
+	if (windowStart > 0) push('…', false)
+
+	let index = windowStart
+	for (const range of ranges) {
+		if (range.end <= windowStart) continue
+		if (range.start >= windowEnd) break
+		const start = Math.max(range.start, windowStart)
+		const end = Math.min(range.end, windowEnd)
+		push(text.slice(index, start), false)
+		push(text.slice(start, end), true)
+		index = end
+	}
+	push(text.slice(index, windowEnd), false)
+
+	if (windowEnd < text.length) push('…', false)
+
+	return segments.length ? segments : [{ text: text.slice(windowStart, windowEnd), isMatch: false }]
 }

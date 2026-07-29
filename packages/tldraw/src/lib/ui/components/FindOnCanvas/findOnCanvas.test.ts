@@ -7,7 +7,7 @@ import {
 } from '@tldraw/editor'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { TestEditor } from '../../../../test/TestEditor'
-import { getFindOnCanvasResults, getFindOnCanvasSnippet } from './findOnCanvas'
+import { getFindMatchRanges, getFindOnCanvasResults, getFindOnCanvasSnippet } from './findOnCanvas'
 
 let editor: TestEditor
 
@@ -217,6 +217,21 @@ describe('getFindOnCanvasResults', () => {
 		expect(ids('gadget')).toEqual([])
 	})
 
+	it('reports match offsets against the source text, not the folded text', () => {
+		editor.createShape({
+			id: textId,
+			type: 'text',
+			props: { richText: toRichText('\u0130Auth service') },
+		})
+
+		const result = getFindOnCanvasResults(editor, 'auth').find(
+			(candidate) => candidate.id === `shape:${textId}`
+		)!
+
+		expect({ start: result.matchStart, end: result.matchEnd }).toEqual({ start: 1, end: 5 })
+		expect(result.text.slice(result.matchStart, result.matchEnd)).toBe('Auth')
+	})
+
 	it('updates when a page is renamed', () => {
 		expect(ids('renamed')).toEqual([])
 		editor.renamePage(pageA, 'Renamed page')
@@ -275,5 +290,62 @@ describe('getFindOnCanvasSnippet', () => {
 
 	it('returns the text unchanged for a blank query', () => {
 		expect(getFindOnCanvasSnippet('Auth', '')).toEqual([{ text: 'Auth', isMatch: false }])
+	})
+
+	it('keeps the source text when folding changes its length', () => {
+		// 'İ'.toLowerCase() is two code units, so folded offsets are not source offsets.
+		expect(getFindOnCanvasSnippet('İAuth service', 'auth')).toEqual([
+			{ text: 'İ', isMatch: false },
+			{ text: 'Auth', isMatch: true },
+			{ text: ' service', isMatch: false },
+		])
+	})
+
+	it('keeps astral characters before a match intact', () => {
+		expect(getFindOnCanvasSnippet('🙂 Auth', 'auth')).toEqual([
+			{ text: '🙂 ', isMatch: false },
+			{ text: 'Auth', isMatch: true },
+		])
+	})
+
+	it('marks every occurrence when folding expands more than once', () => {
+		expect(getFindOnCanvasSnippet('İiİi', 'i')).toEqual([
+			{ text: 'İ', isMatch: true },
+			{ text: 'i', isMatch: true },
+			{ text: 'İ', isMatch: true },
+			{ text: 'i', isMatch: true },
+		])
+	})
+
+	it('never splits a surrogate pair when it trims', () => {
+		const text = `${'🙂'.repeat(40)} needle ${'y'.repeat(100)}`
+		const snippet = getFindOnCanvasSnippet(text, 'needle')
+			.map((segment) => segment.text)
+			.join('')
+		const visible = snippet.replace(/…/g, '')
+
+		// A split pair would leave a lone surrogate, which renders as U+FFFD.
+		expect(visible).not.toContain('\ufffd')
+		expect(JSON.stringify(visible)).not.toContain('\\ud')
+		expect(text).toContain(visible)
+		expect(visible).toContain('needle')
+	})
+})
+
+describe('getFindMatchRanges', () => {
+	it('maps folded matches back onto source indices', () => {
+		expect(getFindMatchRanges('İAuth', 'auth')).toEqual([{ start: 1, end: 5 }])
+		expect('İAuth'.slice(1, 5)).toBe('Auth')
+	})
+
+	it('returns every occurrence in source order', () => {
+		expect(getFindMatchRanges('Auth and OAuth', 'auth')).toEqual([
+			{ start: 0, end: 4 },
+			{ start: 10, end: 14 },
+		])
+	})
+
+	it('returns nothing for a blank query', () => {
+		expect(getFindMatchRanges('Auth', '')).toEqual([])
 	})
 })
