@@ -13,10 +13,11 @@ const overrides: TLUiOverrides = {
 	actions(_editor, actions) {
 		return {
 			...actions,
-			'text-search': {
-				id: 'text-search',
+			// Replace the built-in find on canvas action rather than adding a second cmd+f action,
+			// so this example's panel is the only thing the shortcut opens.
+			'find-on-canvas': {
+				...actions['find-on-canvas'],
 				label: 'Search',
-				kbd: 'cmd+f,ctrl+f',
 				onSelect() {
 					if (!showSearch.get()) {
 						showSearch.set(true)

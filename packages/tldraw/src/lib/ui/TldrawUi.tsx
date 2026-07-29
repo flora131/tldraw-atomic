@@ -16,6 +16,7 @@ import {
 } from './context/TldrawUiContextProvider'
 import { useNativeClipboardEvents } from './hooks/useClipboardEvents'
 import { useEditorEvents } from './hooks/useEditorEvents'
+import { useFindOnCanvasKeyboardShortcut } from './hooks/useFindOnCanvasKeyboardShortcut'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useReadonly } from './hooks/useReadonly'
 import { useDirection, useTranslation } from './hooks/useTranslation/useTranslation'
@@ -102,6 +103,10 @@ const TldrawUiContent = React.memo(function TldrawUI() {
 	const isReadonlyMode = useReadonly()
 	const isFocusMode = useValue('focus', () => editor.getInstanceState().isFocusMode, [editor])
 	const isDebugMode = useValue('debug', () => editor.getInstanceState().isDebugMode, [editor])
+
+	// Mounted here rather than alongside the other shortcuts: with the UI hidden there is no palette
+	// to open, so the browser should keep its own find bar.
+	useFindOnCanvasKeyboardShortcut()
 
 	const container = useContainer()
 	const dir = useDirection()

@@ -135,21 +135,30 @@ function FindOnCanvasPanel() {
 		[a11y, describeResult, getPositionMessage]
 	)
 
+	/** The one place active state changes, so navigation and jumping can never disagree. */
+	const setActiveResult = useCallback(
+		(result: TLUiFindOnCanvasResult, index: number, announce = true) => {
+			rActiveIndex.current = index
+			setActiveResultId(result.id)
+			if (announce) announceResult(result, index)
+		},
+		[announceResult]
+	)
+
 	const handleClose = useCallback(() => {
 		close()
 		editor.getContainer().focus()
 	}, [close, editor])
 
+	/** Arrow keys move the active result without committing to it. */
 	const moveActive = useCallback(
 		(delta: number) => {
 			if (results.length === 0) return
 			const from = activeIndex === -1 ? -1 : activeIndex
 			const next = (from + delta + results.length) % results.length
-			rActiveIndex.current = next
-			setActiveResultId(results[next].id)
-			announceResult(results[next], next)
+			setActiveResult(results[next], next)
 		},
-		[activeIndex, announceResult, results]
+		[activeIndex, results, setActiveResult]
 	)
 
 	/**
@@ -190,6 +199,10 @@ function FindOnCanvasPanel() {
 
 	const jumpTo = useCallback(
 		(result: TLUiFindOnCanvasResult, index: number) => {
+			// Take the active slot first: a jump is also a commit, so the count, the active row and
+			// the next arrow press all have to follow the result we landed on.
+			setActiveResult(result, index, false)
+
 			editor.setCurrentPage(result.pageId)
 
 			if (result.kind === 'page') {
@@ -214,7 +227,22 @@ function FindOnCanvasPanel() {
 			// Selecting a shape queues its own announcement, so let that land first.
 			editor.timers.setTimeout(() => announceResult(result, index), 0)
 		},
-		[announceResult, editor, frameBounds, msg]
+		[announceResult, editor, frameBounds, msg, setActiveResult]
+	)
+
+	/**
+	 * The previous and next controls move and jump in one go: a pointer user has no Enter step.
+	 * Focus goes back to the query, which owns `aria-activedescendant`.
+	 */
+	const jumpBy = useCallback(
+		(delta: number) => {
+			if (results.length === 0) return
+			const from = activeIndex === -1 ? 0 : activeIndex
+			const next = (from + delta + results.length) % results.length
+			jumpTo(results[next], next)
+			rInput.current?.focus()
+		},
+		[activeIndex, jumpTo, results]
 	)
 
 	const handleInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
@@ -224,11 +252,37 @@ function FindOnCanvasPanel() {
 		setQuery(event.target.value)
 	}, [])
 
-	const rAnnouncedQuery = useRef<string | null>(null)
+	// What the user can actually see about the results. Announcing on this rather than on the array
+	// identity means a store tick or a camera move stays quiet, while a shape created, edited,
+	// deleted or renamed elsewhere still reaches the live region.
+	const resultsSignature = useMemo(
+		() =>
+			JSON.stringify(
+				results.map((result) => [
+					result.id,
+					result.kind,
+					result.pageName,
+					result.text,
+					result.matchStart,
+					result.matchEnd,
+				])
+			),
+		[results]
+	)
+
+	const rAnnouncedSignature = useRef<string | null>(null)
 	useEffect(() => {
-		if (rAnnouncedQuery.current === query) return
-		rAnnouncedQuery.current = query
-		if (!query) return
+		const signature = `${query}\u0000${resultsSignature}`
+		if (rAnnouncedSignature.current === signature) return
+		const isFirstRun = rAnnouncedSignature.current === null
+		rAnnouncedSignature.current = signature
+		// Opening with an empty query is announced by the open message instead.
+		if (isFirstRun && !query) return
+
+		if (!query) {
+			a11y.announce({ msg: msg('find-on-canvas.idle'), priority: 'polite' })
+			return
+		}
 		if (results.length === 0) {
 			a11y.announce({
 				msg: msg('find-on-canvas.no-results').replace('{query}', query),
@@ -236,25 +290,45 @@ function FindOnCanvasPanel() {
 			})
 			return
 		}
+		// The active result may have just disappeared; announce the slot that replaces it, using the
+		// same clamp the reconciliation effect applies.
+		const current = results.findIndex((result) => result.id === activeResultId)
+		const index = current === -1 ? clamp(rActiveIndex.current, 0, results.length - 1) : current
 		a11y.announce({
-			msg: `${describeResult(results[0])} ${msg('find-on-canvas.position')
-				.replace('{index}', '1')
+			msg: `${describeResult(results[index])} ${msg('find-on-canvas.position')
+				.replace('{index}', String(index + 1))
 				.replace('{total}', String(results.length))}`,
 			priority: 'polite',
 		})
-	}, [a11y, describeResult, msg, query, results])
+		// `activeResultId` is deliberately not a dependency: arrow and pointer navigation announce
+		// themselves, and re-running here would say everything twice.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [a11y, describeResult, msg, query, resultsSignature])
 
 	const handleKeyDown = useCallback(
 		(event: React.KeyboardEvent) => {
-			// Nothing typed in the palette should reach the canvas shortcut handler.
-			event.stopPropagation()
+			const isQuery = event.target === rInput.current
 
-			if ((event.metaKey || event.ctrlKey) && (event.key === 'f' || event.key === 'F')) {
+			// Escape closes from anywhere in the palette.
+			if (event.key === 'Escape') {
 				event.preventDefault()
-				rInput.current?.focus()
-				rInput.current?.select()
+				event.stopPropagation()
+				handleClose()
 				return
 			}
+
+			// Tab and the arrows have to reach the body so FocusManager can bring the focus ring
+			// back, and nothing on the canvas binds them while a palette control owns focus.
+			const isFocusManagerKey =
+				event.key === 'Tab' || event.key === 'ArrowUp' || event.key === 'ArrowDown'
+
+			// While a palette button owns focus the generic shortcut handler would still see plain
+			// keys, so keep those inside the palette. The query input is already filtered out by
+			// `shouldSkipEvent`, and stopping there would cost us the focus ring.
+			if (!isQuery && !isFocusManagerKey) event.stopPropagation()
+
+			// Enter belongs to the focused button when a button owns focus.
+			if (!isQuery) return
 
 			switch (event.key) {
 				case 'ArrowDown':
@@ -268,10 +342,6 @@ function FindOnCanvasPanel() {
 				case 'Enter':
 					event.preventDefault()
 					if (activeResult) jumpTo(activeResult, activeIndex)
-					break
-				case 'Escape':
-					event.preventDefault()
-					handleClose()
 					break
 			}
 		},
@@ -334,7 +404,7 @@ function FindOnCanvasPanel() {
 							type="icon"
 							title={msg('find-on-canvas.previous')}
 							disabled={!hasResults}
-							onClick={() => moveActive(-1)}
+							onClick={() => jumpBy(-1)}
 							data-testid="find-on-canvas.previous"
 						>
 							<TldrawUiButtonIcon icon="chevron-up" small />
@@ -343,7 +413,7 @@ function FindOnCanvasPanel() {
 							type="icon"
 							title={msg('find-on-canvas.next')}
 							disabled={!hasResults}
-							onClick={() => moveActive(1)}
+							onClick={() => jumpBy(1)}
 							data-testid="find-on-canvas.next"
 						>
 							<TldrawUiButtonIcon icon="chevron-down" small />
@@ -392,11 +462,17 @@ function FindOnCanvasPanel() {
 											id={`tlui-find-on-canvas__result-${index}`}
 											className="tlui-find-on-canvas__row"
 											role="option"
+											// The query owns focus and points at the active row through
+											// `aria-activedescendant`, so rows stay out of the tab order.
+											tabIndex={-1}
 											data-resultid={result.id}
 											data-isactive={isActive}
 											aria-selected={isActive}
 											aria-label={describeResult(result)}
-											onClick={() => jumpTo(result, index)}
+											onClick={() => {
+												jumpTo(result, index)
+												rInput.current?.focus()
+											}}
 										>
 											<TldrawUiIcon
 												icon={result.kind === 'page' ? 'list' : result.icon}

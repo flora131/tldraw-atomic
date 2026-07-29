@@ -29,6 +29,9 @@ const SKIP_KBDS = [
 	'paste',
 	// There's also an upload asset action, so we don't want to set the kbd twice
 	'asset',
+	// Find has to intercept the browser's find bar even while a shape's text is being edited, which
+	// this hook deliberately skips. useFindOnCanvasKeyboardShortcut handles it instead.
+	'find-on-canvas',
 ]
 
 /** @public */

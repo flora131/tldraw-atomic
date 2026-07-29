@@ -1300,6 +1300,9 @@ export function ActionsProvider({ overrides, children }: ActionsProviderProps) {
 				readonlyOk: true,
 				onSelect(source) {
 					trackEvent('find-on-canvas', { source })
+					// The shortcut also fires while a shape's text is being edited. Commit that edit so
+					// the palette can take focus and the editor is no longer in editing mode.
+					editor.complete()
 					findOnCanvas.open()
 				},
 			},
