@@ -403,23 +403,29 @@ function getEventKey(e: KeyboardEvent): string {
 	return key
 }
 
+/**
+ * Whether a keyboard event came from the physical key behind `key`.
+ *
+ * Prefers `event.key`, so Dvorak, Colemak and AZERTY users match the character they actually typed.
+ * Only when that character is non-ASCII — a Cyrillic or Greek layout, or a macOS Option dead key —
+ * does it fall back to the US-QWERTY equivalent of `event.code`.
+ *
+ * @internal
+ */
+export function matchesKeyboardShortcutKey(e: KeyboardEvent, key: string): boolean {
+	const eventKey = getEventKey(e)
+	if (eventKey === key) return true
+	if (eventKey.length === 1 && /^[\x20-\x7e]$/.test(eventKey)) return false
+	return PHYSICAL_KEY_MAP[e.code] === key
+}
+
 function matchesEvent(e: KeyboardEvent, parsed: ParsedKbd): boolean {
 	if (e.shiftKey !== parsed.shift) return false
 	if (e.altKey !== parsed.alt) return false
 	if (e.ctrlKey !== parsed.ctrl) return false
 	if (e.metaKey !== parsed.meta) return false
 
-	const eventKey = getEventKey(e)
-	if (eventKey === parsed.key) return true
-
-	// Fallback for non-Latin layouts (Cyrillic, Greek, etc.) and macOS Option dead-keys,
-	// where event.key is a non-ASCII glyph that wouldn't match any of our shortcut keys.
-	// We re-derive the intended key from event.code's US-QWERTY equivalent. Importantly,
-	// we only use this fallback when event.key is non-ASCII so that Dvorak/Colemak/AZERTY
-	// users — whose event.key IS the Latin character they typed — keep getting the right match.
-	if (eventKey.length === 1 && /^[\x20-\x7e]$/.test(eventKey)) return false
-	const codeKey = PHYSICAL_KEY_MAP[e.code]
-	return codeKey === parsed.key
+	return matchesKeyboardShortcutKey(e, parsed.key)
 }
 
 function shouldSkipEvent(e: KeyboardEvent): boolean {

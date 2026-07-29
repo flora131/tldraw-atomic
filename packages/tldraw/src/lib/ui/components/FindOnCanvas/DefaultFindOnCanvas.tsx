@@ -1,4 +1,13 @@
-import { Box, clamp, TLShapeId, useEditor, useValue, Vec } from '@tldraw/editor'
+import {
+	Box,
+	clamp,
+	suffixSafeId,
+	TLShapeId,
+	useEditor,
+	useUniqueSafeId,
+	useValue,
+	Vec,
+} from '@tldraw/editor'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { usePrefersReducedMotion } from '../../../shapes/shared/usePrefersReducedMotion'
 import { useA11y } from '../../context/a11y'
@@ -52,6 +61,13 @@ function FindOnCanvasPanel() {
 	const rActiveIndex = useRef(-1)
 	// Whether an IME is mid-composition in the query.
 	const rIsComposing = useRef(false)
+
+	// Two editors on one page must not share DOM ids, or their comboboxes cross-wire.
+	const listId = useUniqueSafeId('find-on-canvas-list')
+	const getResultDomId = useCallback(
+		(result: TLUiFindOnCanvasResult) => suffixSafeId(listId, result.id),
+		[listId]
+	)
 
 	const results = useValue('find on canvas results', () => getFindOnCanvasResults(editor, query), [
 		editor,
@@ -151,6 +167,42 @@ function FindOnCanvasPanel() {
 		close()
 		editor.getContainer().focus()
 	}, [close, editor])
+
+	// The palette is not modal, so focus often sits on the canvas — after clicking a shape, say.
+	// Escape has to close Find from there too. This listener bubbles from the container, so the
+	// editor's own Escape handling (stop editing, cancel the tool, clear the selection) runs first
+	// and keeps its meaning; Find takes the keystroke only once nothing else claimed it.
+	useEffect(() => {
+		const container = editor.getContainer()
+
+		const handleCanvasEscape = (event: KeyboardEvent) => {
+			if (event.key !== 'Escape') return
+			// eslint-disable-next-line @typescript-eslint/no-deprecated
+			if (event.isComposing || event.keyCode === 229) return
+
+			const target = event.target as HTMLElement | null
+			if (!target || !container.contains(target)) return
+			// The panel's own handler owns everything inside the panel.
+			if (rPanel.current?.contains(target)) return
+			// A shape's text editor, a rename field or a select owns Escape while it has focus.
+			// `isContentEditable` is the browser's answer; the attribute selector also catches
+			// descendants of an editing host, and works in jsdom, which does not implement editing.
+			if (
+				target.isContentEditable ||
+				target.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]')
+			) {
+				return
+			}
+			// A menu or dialog closes on Escape before the palette does.
+			if (editor.menus.hasAnyOpenMenus() || editor.getCrashingError()) return
+
+			event.preventDefault()
+			handleClose()
+		}
+
+		container.addEventListener('keydown', handleCanvasEscape)
+		return () => container.removeEventListener('keydown', handleCanvasEscape)
+	}, [editor, handleClose])
 
 	/** Arrow keys move the active result without committing to it. */
 	const moveActive = useCallback(
@@ -407,11 +459,9 @@ function FindOnCanvasPanel() {
 						placeholder={msg('find-on-canvas.placeholder')}
 						aria-label={msg('find-on-canvas.title')}
 						aria-expanded={hasResults}
-						aria-controls="tlui-find-on-canvas__list"
+						aria-controls={listId}
 						aria-autocomplete="list"
-						aria-activedescendant={
-							activeResult ? `tlui-find-on-canvas__result-${activeIndex}` : undefined
-						}
+						aria-activedescendant={activeResult ? getResultDomId(activeResult) : undefined}
 						autoComplete="off"
 						spellCheck={false}
 						data-testid="find-on-canvas.input"
@@ -456,7 +506,7 @@ function FindOnCanvasPanel() {
 				{hasResults ? (
 					<div
 						ref={rList}
-						id="tlui-find-on-canvas__list"
+						id={listId}
 						className="tlui-find-on-canvas__list"
 						role="listbox"
 						aria-label={msg('find-on-canvas.matches')}
@@ -481,7 +531,7 @@ function FindOnCanvasPanel() {
 										<button
 											key={result.id}
 											type="button"
-											id={`tlui-find-on-canvas__result-${index}`}
+											id={getResultDomId(result)}
 											className="tlui-find-on-canvas__row"
 											role="option"
 											// The query owns focus and points at the active row through

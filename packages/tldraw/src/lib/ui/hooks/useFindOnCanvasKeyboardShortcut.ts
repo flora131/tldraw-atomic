@@ -1,6 +1,7 @@
 import { Editor, useEditor, useValue } from '@tldraw/editor'
 import { useEffect } from 'react'
 import { useActions } from '../context/actions'
+import { matchesKeyboardShortcutKey } from './useKeyboardShortcuts'
 
 /**
  * The generic shortcut registry also refuses to run while a shape's text is being edited. Find has
@@ -43,7 +44,9 @@ export function useFindOnCanvasKeyboardShortcut() {
 			// combinations only report that through the legacy keyCode.
 			// eslint-disable-next-line @typescript-eslint/no-deprecated
 			if (event.isComposing || event.keyCode === 229) return
-			if (event.key !== 'f' && event.key !== 'F') return
+			// `event.key` on a Cyrillic or Greek layout is not `f`, so fall back to the physical key
+			// the same way the generic shortcut registry does.
+			if (!matchesKeyboardShortcutKey(event, 'f')) return
 			if (event.shiftKey || event.altKey) return
 			// The action's kbd is `cmd+f,ctrl+f`: exactly one accelerator, never both.
 			if (event.metaKey === event.ctrlKey) return

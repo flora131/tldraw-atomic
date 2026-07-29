@@ -3,7 +3,10 @@ import { createShapeId, Editor, PageRecordType, toRichText } from '@tldraw/edito
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Tldraw } from '../../lib/Tldraw'
 import { TLUiOverrides } from '../../lib/ui/overrides'
-import { renderTldrawComponentWithEditor } from '../testutils/renderTldrawComponent'
+import {
+	renderTldrawComponent,
+	renderTldrawComponentWithEditor,
+} from '../testutils/renderTldrawComponent'
 
 // The package test setup replaces `useTranslation` with a stub that returns the key. These tests
 // check the copy users actually see, so they use the real translations.
@@ -129,6 +132,54 @@ describe('find on canvas', () => {
 		pressShortcut(editor, { key: 'f', code: 'KeyF', ctrlKey: true })
 
 		expect(document.activeElement).toBe(getInput())
+	})
+
+	it('opens from a non-Latin keyboard layout', async () => {
+		const { editor } = await setup()
+
+		// Cyrillic: the physical F key reports 'а'.
+		const cyrillic = pressShortcut(editor, { key: 'а', code: 'KeyF', metaKey: true })
+		expect(cyrillic.defaultPrevented).toBe(true)
+		expect(getInput()).toBeTruthy()
+
+		fireEvent.keyDown(getInput(), { key: 'Escape' })
+
+		// Greek: the same physical key reports 'φ'.
+		const greek = pressShortcut(editor, { key: 'φ', code: 'KeyF', ctrlKey: true })
+		expect(greek.defaultPrevented).toBe(true)
+		expect(getInput()).toBeTruthy()
+	})
+
+	it('does not fall back to the physical key for other Latin layouts', async () => {
+		const { editor } = await setup()
+
+		// Dvorak: the physical F key types 'j', and cmd+J is not find.
+		const event = pressShortcut(editor, { key: 'j', code: 'KeyF', metaKey: true })
+
+		expect(event.defaultPrevented).toBe(false)
+		expect(screen.queryByTestId('find-on-canvas.input')).toBeNull()
+	})
+
+	it('ignores a non-Latin shortcut when shortcuts are off or an IME is composing', async () => {
+		const { editor } = await setup()
+		act(() => {
+			editor.user.updateUserPreferences({ areKeyboardShortcutsEnabled: false })
+		})
+		const disabled = pressShortcut(editor, { key: 'а', code: 'KeyF', metaKey: true })
+		expect(disabled.defaultPrevented).toBe(false)
+		expect(screen.queryByTestId('find-on-canvas.input')).toBeNull()
+
+		act(() => {
+			editor.user.updateUserPreferences({ areKeyboardShortcutsEnabled: true })
+		})
+		const composing = pressShortcut(editor, {
+			key: 'а',
+			code: 'KeyF',
+			metaKey: true,
+			isComposing: true,
+		})
+		expect(composing.defaultPrevented).toBe(false)
+		expect(screen.queryByTestId('find-on-canvas.input')).toBeNull()
 	})
 
 	it('opens when the editor holds focus but nothing is focused in the DOM', async () => {
@@ -571,6 +622,131 @@ describe('find on canvas', () => {
 
 		fireEvent.keyDown(getInput(), { key: 'ArrowDown' })
 		expect(getCount()).toBe('2 of 4')
+	})
+
+	it('closes on escape after focus has moved to the canvas', async () => {
+		const { editor } = await setup()
+		openFind(editor)
+		type('auth')
+
+		// Model clicking the canvas: focus leaves the palette, so its own handler never sees the key.
+		const container = editor.getContainer()
+		container.focus()
+		expect(document.activeElement).toBe(container)
+
+		fireEvent.keyDown(container, { key: 'Escape' })
+
+		expect(screen.queryByTestId('find-on-canvas.input')).toBeNull()
+		expect(document.activeElement).toBe(container)
+	})
+
+	it('leaves canvas escape alone for editors, menus, and composition', async () => {
+		const { editor } = await setup()
+		const container = editor.getContainer()
+
+		// A shape's text editor keeps escape for itself.
+		openFind(editor)
+		const editable = editor.getContainerDocument().createElement('div')
+		editable.setAttribute('contenteditable', 'true')
+		container.appendChild(editable)
+		fireEvent.keyDown(editable, { key: 'Escape' })
+		expect(screen.queryByTestId('find-on-canvas.input')).toBeTruthy()
+		editable.remove()
+
+		// So does an open menu.
+		act(() => {
+			editor.menus.addOpenMenu('some-other-menu')
+		})
+		fireEvent.keyDown(container, { key: 'Escape' })
+		expect(screen.queryByTestId('find-on-canvas.input')).toBeTruthy()
+		act(() => {
+			editor.menus.deleteOpenMenu('some-other-menu')
+		})
+
+		// So does an IME candidate window.
+		fireEvent.keyDown(container, { key: 'Escape', isComposing: true })
+		expect(screen.queryByTestId('find-on-canvas.input')).toBeTruthy()
+
+		// A plain canvas escape closes it, and the listener goes with it.
+		fireEvent.keyDown(container, { key: 'Escape' })
+		expect(screen.queryByTestId('find-on-canvas.input')).toBeNull()
+		// A second escape has nothing left to close, and must not throw.
+		fireEvent.keyDown(container, { key: 'Escape' })
+		expect(screen.queryByTestId('find-on-canvas.input')).toBeNull()
+	})
+
+	it('keeps its ARIA ids to itself when two editors are on the page', async () => {
+		const editors: Editor[] = []
+		const rendered = await renderTldrawComponent(
+			<>
+				<Tldraw onMount={(editor) => void editors.push(editor)} />
+				<Tldraw onMount={(editor) => void editors.push(editor)} />
+			</>,
+			{ waitForPatterns: false }
+		)
+		expect(editors).toHaveLength(2)
+
+		for (const editor of editors) {
+			act(() => {
+				editor.user.updateUserPreferences({ areKeyboardShortcutsEnabled: true })
+				editor.menus.clearOpenMenus()
+				editor.updateInstanceState({ isFocused: true })
+				editor.createShape({
+					id: createShapeId(`text-${editors.indexOf(editor)}`),
+					type: 'text',
+					x: 0,
+					y: 0,
+					props: { richText: toRichText('Authentication service') },
+				})
+			})
+			openFind(editor)
+			const input = editor
+				.getContainer()
+				.querySelector('[data-testid="find-on-canvas.input"]') as HTMLInputElement
+			fireEvent.change(input, { target: { value: 'auth' } })
+		}
+
+		const inputs = rendered.container.querySelectorAll('[data-testid="find-on-canvas.input"]')
+		expect(inputs).toHaveLength(2)
+
+		const listIds = [...rendered.container.querySelectorAll('[role="listbox"]')].map((el) => el.id)
+		expect(listIds).toHaveLength(2)
+		expect(new Set(listIds).size).toBe(2)
+
+		const optionIds = [...rendered.container.querySelectorAll('[role="option"]')].map((el) => el.id)
+		expect(optionIds.length).toBeGreaterThan(1)
+		expect(new Set(optionIds).size).toBe(optionIds.length)
+
+		// Each combobox points at the listbox and the option inside its own editor.
+		for (const editor of editors) {
+			const container = editor.getContainer()
+			const input = container.querySelector(
+				'[data-testid="find-on-canvas.input"]'
+			) as HTMLInputElement
+			const listbox = document.getElementById(input.getAttribute('aria-controls')!)
+			const active = document.getElementById(input.getAttribute('aria-activedescendant')!)
+			expect(listbox).toBeTruthy()
+			expect(container.contains(listbox)).toBe(true)
+			expect(active).toBeTruthy()
+			expect(container.contains(active)).toBe(true)
+		}
+
+		// Moving the active result in one editor leaves the other alone.
+		const [first, second] = editors
+		const secondActiveBefore = (
+			second
+				.getContainer()
+				.querySelector('[data-testid="find-on-canvas.input"]') as HTMLInputElement
+		).getAttribute('aria-activedescendant')
+		fireEvent.keyDown(first.getContainer().querySelector('[data-testid="find-on-canvas.input"]')!, {
+			key: 'ArrowDown',
+		})
+		const secondActiveAfter = (
+			second
+				.getContainer()
+				.querySelector('[data-testid="find-on-canvas.input"]') as HTMLInputElement
+		).getAttribute('aria-activedescendant')
+		expect(secondActiveAfter).toBe(secondActiveBefore)
 	})
 
 	it('closes on escape and returns focus to the editor', async () => {
