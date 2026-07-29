@@ -332,6 +332,54 @@ describe('getFindOnCanvasSnippet', () => {
 	})
 })
 
+describe('Greek sigma', () => {
+	it('treats capital, normal, and final sigma as the same letter', () => {
+		expect(getFindMatchRanges('ΟΣ', 'ος')).toEqual([{ start: 0, end: 2 }])
+		expect(getFindMatchRanges('ος', 'ΟΣ')).toEqual([{ start: 0, end: 2 }])
+		expect(getFindMatchRanges('ΟΣ', 'οσ')).toEqual([{ start: 0, end: 2 }])
+		expect(getFindMatchRanges('οσ', 'ος')).toEqual([{ start: 0, end: 2 }])
+	})
+
+	it('matches both occurrences regardless of position in the word', () => {
+		// `'ΟΣΟΣ'.toLowerCase()` is `'οσος'`, so a whole-string lowercase would miss one of these.
+		expect(getFindMatchRanges('ΟΣΟΣ', 'ΟΣ')).toEqual([
+			{ start: 0, end: 2 },
+			{ start: 2, end: 4 },
+		])
+		expect(getFindMatchRanges('ΟΣΟΣ', 'ος')).toEqual([
+			{ start: 0, end: 2 },
+			{ start: 2, end: 4 },
+		])
+	})
+
+	it('marks both occurrences without rewriting the source spelling', () => {
+		expect(getFindOnCanvasSnippet('ΟΣΟΣ', 'ος')).toEqual([
+			{ text: 'ΟΣ', isMatch: true },
+			{ text: 'ΟΣ', isMatch: true },
+		])
+		expect(getFindOnCanvasSnippet('τέλος και τέλος', 'τέλοσ')).toEqual([
+			{ text: 'τέλος', isMatch: true },
+			{ text: ' και ', isMatch: false },
+			{ text: 'τέλος', isMatch: true },
+		])
+	})
+
+	it('finds a shape whose label ends in a final sigma', () => {
+		editor.createShape({
+			id: textId,
+			type: 'text',
+			props: { richText: toRichText('Κάτοψη τέλος') },
+		})
+
+		for (const query of ['τέλος', 'τέλοσ', 'ΤΈΛΟΣ']) {
+			const result = getFindOnCanvasResults(editor, query).find(
+				(candidate) => candidate.id === `shape:${textId}`
+			)
+			expect(result?.text.slice(result.matchStart, result.matchEnd)).toBe('τέλος')
+		}
+	})
+})
+
 describe('getFindMatchRanges', () => {
 	it('maps folded matches back onto source indices', () => {
 		expect(getFindMatchRanges('İAuth', 'auth')).toEqual([{ start: 1, end: 5 }])

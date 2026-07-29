@@ -50,6 +50,8 @@ function FindOnCanvasPanel() {
 	const rList = useRef<HTMLDivElement>(null)
 	// The slot the active result sat in, so that deleting it selects its successor.
 	const rActiveIndex = useRef(-1)
+	// Whether an IME is mid-composition in the query.
+	const rIsComposing = useRef(false)
 
 	const results = useValue('find on canvas results', () => getFindOnCanvasResults(editor, query), [
 		editor,
@@ -307,6 +309,20 @@ function FindOnCanvasPanel() {
 
 	const handleKeyDown = useCallback(
 		(event: React.KeyboardEvent) => {
+			// While an IME is composing, Enter commits the candidate, the arrows walk the candidate
+			// list and Escape cancels it. None of those belong to the palette, and swallowing them
+			// would break typing in Japanese, Chinese or Korean.
+			const nativeEvent = event.nativeEvent
+			if (
+				rIsComposing.current ||
+				nativeEvent.isComposing ||
+				// Some browser and IME combinations only report composition through the legacy keyCode.
+				// eslint-disable-next-line @typescript-eslint/no-deprecated
+				nativeEvent.keyCode === 229
+			) {
+				return
+			}
+
 			const isQuery = event.target === rInput.current
 
 			// Escape closes from anywhere in the palette.
@@ -382,6 +398,12 @@ function FindOnCanvasPanel() {
 						role="combobox"
 						value={query}
 						onChange={handleInputChange}
+						onCompositionStart={() => {
+							rIsComposing.current = true
+						}}
+						onCompositionEnd={() => {
+							rIsComposing.current = false
+						}}
 						placeholder={msg('find-on-canvas.placeholder')}
 						aria-label={msg('find-on-canvas.title')}
 						aria-expanded={hasResults}

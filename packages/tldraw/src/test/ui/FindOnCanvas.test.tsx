@@ -24,6 +24,9 @@ async function setup(overrides?: TLUiOverrides) {
 	)
 
 	act(() => {
+		// User preferences and open menus are global, so start every test from a known state.
+		editor.user.updateUserPreferences({ areKeyboardShortcutsEnabled: true })
+		editor.menus.clearOpenMenus()
 		// Shortcuts only register while the editor is focused.
 		editor.updateInstanceState({ isFocused: true })
 		editor.renamePage(editor.getCurrentPageId(), 'Onboarding flow')
@@ -175,6 +178,68 @@ describe('find on canvas', () => {
 		expect(document.activeElement).toBe(getInput())
 		// Opening committed the text edit.
 		expect(editor.getEditingShapeId()).toBe(null)
+	})
+
+	it('leaves the browser find bar alone when keyboard shortcuts are turned off', async () => {
+		const { editor } = await setup()
+		act(() => {
+			editor.user.updateUserPreferences({ areKeyboardShortcutsEnabled: false })
+		})
+
+		const event = openFind(editor)
+
+		expect(screen.queryByTestId('find-on-canvas.input')).toBeNull()
+		// Not preventing it is the point: the browser's own find bar has to stay available.
+		expect(event.defaultPrevented).toBe(false)
+	})
+
+	it('leaves the browser find bar alone while editing text with shortcuts turned off', async () => {
+		const { editor } = await setup()
+		const editable = editor.getContainerDocument().createElement('div')
+		editable.setAttribute('contenteditable', 'true')
+		editor.getContainer().appendChild(editable)
+		act(() => {
+			editor.user.updateUserPreferences({ areKeyboardShortcutsEnabled: false })
+			editor.setEditingShape(textId)
+		})
+		editable.focus()
+
+		const event = openFind(editor, editable)
+
+		expect(screen.queryByTestId('find-on-canvas.input')).toBeNull()
+		expect(event.defaultPrevented).toBe(false)
+		// The text edit is untouched.
+		expect(editor.getEditingShapeId()).toBe(textId)
+	})
+
+	it('does not open while another menu is open', async () => {
+		const { editor } = await setup()
+		act(() => {
+			editor.menus.addOpenMenu('some-other-menu')
+		})
+
+		const event = openFind(editor)
+
+		expect(screen.queryByTestId('find-on-canvas.input')).toBeNull()
+		expect(event.defaultPrevented).toBe(false)
+
+		act(() => {
+			editor.menus.deleteOpenMenu('some-other-menu')
+		})
+		expect(openFind(editor).defaultPrevented).toBe(true)
+		expect(getInput()).toBeTruthy()
+	})
+
+	it('does not open while the editor is crashing', async () => {
+		const { editor } = await setup()
+		act(() => {
+			editor.crash(new Error('test crash'))
+		})
+
+		const event = openFind(editor)
+
+		expect(screen.queryByTestId('find-on-canvas.input')).toBeNull()
+		expect(event.defaultPrevented).toBe(false)
 	})
 
 	it('lets an action override under the same id replace the palette', async () => {
@@ -456,6 +521,56 @@ describe('find on canvas', () => {
 		expect(screen.getByTestId('find-on-canvas.message').textContent).toBe(
 			'Search shape text, notes, bookmarks, and page names.'
 		)
+	})
+
+	it('leaves the keyboard to the IME while it is composing', async () => {
+		const { editor } = await setup()
+		openFind(editor)
+		type('auth')
+
+		const input = getInput()
+		const startingPage = editor.getCurrentPageId()
+		fireEvent.compositionStart(input)
+
+		// Enter commits the IME candidate; it must not jump.
+		const enter = fireEvent.keyDown(input, { key: 'Enter' })
+		expect(enter).toBe(true) // not default-prevented
+		expect(editor.getCurrentPageId()).toBe(startingPage)
+		expect(editor.getSelectedShapeIds()).toEqual([])
+		expect(getCount()).toBe('1 of 4')
+
+		// The arrows walk the candidate list, so they must not move the active result.
+		fireEvent.keyDown(input, { key: 'ArrowDown' })
+		fireEvent.keyDown(input, { key: 'ArrowUp' })
+		expect(getCount()).toBe('1 of 4')
+
+		// Escape cancels the candidate, so it must not close the palette.
+		fireEvent.keyDown(input, { key: 'Escape' })
+		expect(screen.queryByTestId('find-on-canvas.input')).toBeTruthy()
+
+		// Once composition ends, everything works again.
+		fireEvent.compositionEnd(input)
+		fireEvent.keyDown(input, { key: 'ArrowDown' })
+		expect(getCount()).toBe('2 of 4')
+		fireEvent.keyDown(input, { key: 'Enter' })
+		expect(editor.getSelectedShapeIds()).toEqual([noteId])
+	})
+
+	it('leaves the keyboard to the IME when only the event says it is composing', async () => {
+		const { editor } = await setup()
+		openFind(editor)
+		type('auth')
+
+		// jsdom's fireEvent does carry `isComposing` through to the native event; some browser and
+		// IME combinations only report composition through the legacy keyCode, so both are covered.
+		fireEvent.keyDown(getInput(), { key: 'ArrowDown', isComposing: true })
+		expect(getCount()).toBe('1 of 4')
+
+		fireEvent.keyDown(getInput(), { key: 'ArrowDown', keyCode: 229 })
+		expect(getCount()).toBe('1 of 4')
+
+		fireEvent.keyDown(getInput(), { key: 'ArrowDown' })
+		expect(getCount()).toBe('2 of 4')
 	})
 
 	it('closes on escape and returns focus to the editor', async () => {

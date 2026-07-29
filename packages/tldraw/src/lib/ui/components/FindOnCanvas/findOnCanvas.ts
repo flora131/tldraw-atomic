@@ -108,6 +108,16 @@ interface TLUiFindOnCanvasFoldedText {
 }
 
 /**
+ * Greek final sigma is a positional variant of sigma, not a different letter: `ΟΣ`, `οσ` and `ος`
+ * are the same word. Lowercasing alone keeps `ς` as `ς`, so a word-final sigma would never match a
+ * query typed with `σ` (or vice versa). Canonicalising it is still exact case-insensitive matching:
+ * both forms occupy one code unit, so the source map stays valid.
+ */
+function canonicalizeFindFold(text: string) {
+	return text.replaceAll('\u03c2', '\u03c3')
+}
+
+/**
  * Case-fold `text` one code point at a time, recording where each folded code unit came from.
  *
  * @internal
@@ -121,8 +131,10 @@ export function foldTextForFind(text: string): TLUiFindOnCanvasFoldedText {
 		const codePoint = text.codePointAt(index)!
 		const source = String.fromCodePoint(codePoint)
 		const next = index + source.length
-		// Locale-independent, so the same query matches the same text for every user.
-		const lowered = source.toLowerCase()
+		// Locale-independent, so the same query matches the same text for every user. Folding one
+		// code point at a time also avoids `toLowerCase()`'s contextual final sigma, which would make
+		// a match depend on where in the word it fell.
+		const lowered = canonicalizeFindFold(source.toLowerCase())
 		for (let unit = 0; unit < lowered.length; unit++) {
 			sourceStart.push(index)
 			sourceEnd.push(next)

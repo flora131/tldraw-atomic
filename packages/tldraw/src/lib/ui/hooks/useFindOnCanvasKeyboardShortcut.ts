@@ -1,6 +1,19 @@
-import { useEditor, useValue } from '@tldraw/editor'
+import { Editor, useEditor, useValue } from '@tldraw/editor'
 import { useEffect } from 'react'
 import { useActions } from '../context/actions'
+
+/**
+ * The generic shortcut registry also refuses to run while a shape's text is being edited. Find has
+ * to work there — that is where the browser's own find bar would otherwise win — so this listener
+ * keeps every other guard and drops only that one.
+ */
+function isFindOnCanvasShortcutDisabled(editor: Editor) {
+	return (
+		editor.menus.hasAnyOpenMenus() ||
+		!!editor.getCrashingError() ||
+		!editor.user.getAreKeyboardShortcutsEnabled()
+	)
+}
 
 /**
  * Cmd/Ctrl+F cannot go through the generic shortcut registry: that handler bails out for
@@ -26,10 +39,18 @@ export function useFindOnCanvasKeyboardShortcut() {
 		const doc = editor.getContainerDocument()
 
 		const handleKeyDown = (event: KeyboardEvent) => {
+			// An IME candidate window owns the keyboard while it is composing. Some browser and IME
+			// combinations only report that through the legacy keyCode.
+			// eslint-disable-next-line @typescript-eslint/no-deprecated
+			if (event.isComposing || event.keyCode === 229) return
 			if (event.key !== 'f' && event.key !== 'F') return
 			if (event.shiftKey || event.altKey) return
 			// The action's kbd is `cmd+f,ctrl+f`: exactly one accelerator, never both.
 			if (event.metaKey === event.ctrlKey) return
+
+			// The user can turn keyboard shortcuts off, and then the browser's find bar is theirs
+			// again. A host override may still opt into required behaviour.
+			if (isFindOnCanvasShortcutDisabled(editor) && !action.isRequiredA11yAction) return
 
 			// Only when the keystroke belongs to this editor. Nothing focused counts too: the editor
 			// can hold logical focus while the document body is still the active element.
