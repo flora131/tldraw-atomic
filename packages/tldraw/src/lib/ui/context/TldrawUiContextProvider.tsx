@@ -17,6 +17,7 @@ import { BreakPointProvider } from './breakpoints'
 import { TLUiComponents, TldrawUiComponentsProvider } from './components'
 import { TldrawUiDialogsProvider } from './dialogs'
 import { TLUiEventHandler, TldrawUiEventsProvider } from './events'
+import { TldrawUiFindOnCanvasProvider } from './find-on-canvas'
 import { TldrawUiToastsProvider } from './toasts'
 
 /** @public */
@@ -85,7 +86,9 @@ export const TldrawUiContextProvider = track(function TldrawUiContextProvider({
 									<TldrawUiA11yProvider>
 										<BreakPointProvider forceMobile={forceMobile}>
 											<TldrawUiComponentsProvider overrides={components}>
-												<InternalProviders overrides={overrides}>{children}</InternalProviders>
+												<TldrawUiFindOnCanvasProvider>
+													<InternalProviders overrides={overrides}>{children}</InternalProviders>
+												</TldrawUiFindOnCanvasProvider>
 											</TldrawUiComponentsProvider>
 										</BreakPointProvider>
 									</TldrawUiA11yProvider>

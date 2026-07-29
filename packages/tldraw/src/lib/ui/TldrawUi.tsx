@@ -3,6 +3,7 @@ import classNames from 'classnames'
 import React, { ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { TLUiAssetUrlOverrides } from './assetUrls'
 import { SkipToMainContent } from './components/A11y'
+import { DefaultFindOnCanvas } from './components/FindOnCanvas/DefaultFindOnCanvas'
 import { TldrawUiButton } from './components/primitives/Button/TldrawUiButton'
 import { TldrawUiButtonIcon } from './components/primitives/Button/TldrawUiButtonIcon'
 import { PORTRAIT_BREAKPOINT, PORTRAIT_BREAKPOINTS } from './constants'
@@ -239,6 +240,7 @@ const TldrawUiContent = React.memo(function TldrawUI() {
 			{FollowingIndicator && <FollowingIndicator />}
 			{Toasts && <Toasts />}
 			{Dialogs && <Dialogs />}
+			<DefaultFindOnCanvas />
 		</div>
 	)
 })

@@ -83,6 +83,7 @@ export interface TLUiEventMap {
 	'zoom-out': { towardsCursor: boolean }
 	'zoom-to-fit': null
 	'zoom-to-selection': null
+	'find-on-canvas': null
 	'reset-zoom': null
 	'zoom-into-view': null
 	'zoom-to-content': null

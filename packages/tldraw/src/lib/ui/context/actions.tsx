@@ -41,6 +41,7 @@ import { TLUiOverrideHelpers, useDefaultHelpers } from '../overrides'
 import { useA11y } from './a11y'
 import { useTldrawUiComponents } from './components'
 import { TLUiEventSource, useUiEvents } from './events'
+import { useFindOnCanvas } from './find-on-canvas'
 
 /** @public */
 export interface TLUiActionItem<
@@ -106,6 +107,7 @@ export function ActionsProvider({ overrides, children }: ActionsProviderProps) {
 	const trackEvent = useUiEvents()
 	const a11y = useA11y()
 	const msg = useTranslation()
+	const findOnCanvas = useFindOnCanvas()
 
 	const defaultDocumentName = helpers.msg('document.default-name')
 
@@ -1292,6 +1294,16 @@ export function ActionsProvider({ overrides, children }: ActionsProviderProps) {
 				},
 			},
 			{
+				id: 'find-on-canvas',
+				label: 'action.find-on-canvas',
+				kbd: 'cmd+f,ctrl+f',
+				readonlyOk: true,
+				onSelect(source) {
+					trackEvent('find-on-canvas', { source })
+					findOnCanvas.open()
+				},
+			},
+			{
 				id: 'toggle-snap-mode',
 				label: {
 					default: 'action.toggle-snap-mode',
@@ -1976,6 +1988,7 @@ export function ActionsProvider({ overrides, children }: ActionsProviderProps) {
 		msg,
 		a11y,
 		components,
+		findOnCanvas,
 	])
 
 	return <ActionsContext.Provider value={asActions(actions)}>{children}</ActionsContext.Provider>

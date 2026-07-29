@@ -54,6 +54,7 @@ export function DefaultKeyboardShortcutsDialogContent() {
 				<TldrawUiMenuActionItem actionId="print" />
 			</TldrawUiMenuGroup>
 			<TldrawUiMenuGroup label="shortcuts-dialog.view" id="view">
+				<TldrawUiMenuActionItem actionId="find-on-canvas" />
 				<TldrawUiMenuActionItem actionId="select-zoom-tool" />
 				<TldrawUiMenuActionItem actionId="zoom-in" />
 				<TldrawUiMenuActionItem actionId="zoom-out" />
