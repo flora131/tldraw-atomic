@@ -2488,6 +2488,13 @@ tldraw? probably.
 	overflow: hidden;
 }
 
+/* Same focus ring as .tlui-button, since a result row is not one. */
+.tl-container__focused:not(.tl-container__no-focus-ring) .tlui-find-on-canvas__row:focus-visible {
+	border-radius: 10px;
+	outline: 2px solid var(--tl-color-focus);
+	outline-offset: -5px;
+}
+
 .tlui-find-on-canvas__row::before {
 	content: '';
 	position: absolute;
